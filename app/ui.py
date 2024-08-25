@@ -6,6 +6,7 @@ from PyQt5.QtCore import Qt
 import logging
 from app.config_handler import load_config, save_config
 from app.registration_worker import RegistrationWorker
+from app.browser_manager import BrowserManager  # 导入 BrowserManager
 
 # 设置日志记录
 logging.basicConfig(
@@ -18,9 +19,11 @@ logging.basicConfig(
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
-        self.initUI()
 
+        # 首先初始化浏览器管理器
+        self.browser_manager = BrowserManager(max_browsers=10)  # 默认最大10个浏览器
         # 启动时自动加载配置文件
+        self.initUI()
         self.load_initial_configs()
 
     def initUI(self):
@@ -73,6 +76,25 @@ class MainWindow(QWidget):
 
         # 第二行：线程配置、设置参数区域、启动监听线程数量、线程执行状态
         second_row_layout = QHBoxLayout()
+        # 浏览器管理部分
+        browser_management_group = QGroupBox("浏览器管理")
+        browser_management_layout = QVBoxLayout()
+
+        self.max_browsers_spinbox = QSpinBox()
+        self.max_browsers_spinbox.setRange(1, 100)
+        self.max_browsers_spinbox.setValue(self.browser_manager.max_browsers)
+        self.max_browsers_spinbox.valueChanged.connect(self.set_max_browsers)
+        browser_management_layout.addWidget(QLabel("最大浏览器数量:"))
+        browser_management_layout.addWidget(self.max_browsers_spinbox)
+
+        self.browser_list_table = QTableWidget()
+        self.browser_list_table.setColumnCount(2)
+        self.browser_list_table.setHorizontalHeaderLabels(['线程名', '浏览器ID'])
+        browser_management_layout.addWidget(self.browser_list_table)
+        self.browser_manager.browser_list_updated.connect(self.update_browser_list)
+
+        browser_management_group.setLayout(browser_management_layout)
+        main_layout.addWidget(browser_management_group)
 
         # 线程配置区域
         thread_config_group = QGroupBox("线程配置")
@@ -200,7 +222,15 @@ class MainWindow(QWidget):
     def start_registration(self):
         thread_count = self.thread_spinbox.value()
         self.thread_status_table.setRowCount(thread_count)  # 动态设置线程状态表格行数
-        self.registration_worker = RegistrationWorker(self.account_table, thread_count, self.log)
+
+        # 创建 RegistrationWorker 实例时传递 browser_manager
+        self.registration_worker = RegistrationWorker(
+            self.account_table,
+            thread_count,
+            self.log,
+            self.browser_manager  # 传递 browser_manager 实例
+        )
+
         self.registration_worker.update_status.connect(self.update_thread_status)  # 连接信号更新线程状态
         self.registration_worker.reload_table.connect(self.load_initial_configs)  # 连接信号到重新加载方法
         self.registration_worker.save_configs_signal.connect(self.save_all_configs)  # 连接信号以保存配置
@@ -280,6 +310,15 @@ class MainWindow(QWidget):
         self.log_output.append(message)
         logging.info(message)
 
+    def set_max_browsers(self):
+        max_browsers = self.max_browsers_spinbox.value()
+        self.browser_manager.set_max_browsers(max_browsers)
+
+    def update_browser_list(self):
+        self.browser_list_table.setRowCount(len(self.browser_manager.get_allocated_browsers()))
+        for i, (thread_name, browser_id) in enumerate(self.browser_manager.get_allocated_browsers().items()):
+            self.browser_list_table.setItem(i, 0, QTableWidgetItem(thread_name))
+            self.browser_list_table.setItem(i, 1, QTableWidgetItem(browser_id))
 def run_app():
     app = QApplication(sys.argv)
     main_window = MainWindow()

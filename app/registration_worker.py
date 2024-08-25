@@ -3,17 +3,20 @@ import time
 from PyQt5.QtCore import QThread, pyqtSignal
 from PyQt5.QtWidgets import QTableWidgetItem
 from selenium import webdriver
+from app.bit_api import openBrowser
+from app.browser_manager import BrowserManager  # 导入 BrowserManager
 
 class RegistrationWorker(QThread):
     update_status = pyqtSignal(int, str)
     reload_table = pyqtSignal()  # 用于通知主线程重新加载表格
     save_configs_signal = pyqtSignal()  # 用于通知主线程保存配置
 
-    def __init__(self, account_table, thread_count, log_callback):
+    def __init__(self, account_table, thread_count, log_callback, browser_manager):
         super().__init__()
         self.account_table = account_table
         self.thread_count = thread_count
         self.log = log_callback
+        self.browser_manager = browser_manager
         self.threads = []
 
     def run(self):
@@ -34,9 +37,6 @@ class RegistrationWorker(QThread):
         self.save_configs_signal.emit()  # 触发信号保存配置
         self.reload_table.emit()  # 触发信号重新加载表格
 
-    def get_threads(self):
-        return self.threads
-
     def get_unregistered_accounts(self):
         unregistered = []
         for row in range(self.account_table.rowCount()):
@@ -49,7 +49,13 @@ class RegistrationWorker(QThread):
 
     def process_account(self, thread_index, account, thread_name):
         row, email, password = account
-        browser = self.create_browser_instance()
+        browser_id = self.browser_manager.allocate_browser(thread_name)
+
+        while browser_id is None:  # 如果没有可用浏览器，则等待
+            time.sleep(1)
+            browser_id = self.browser_manager.allocate_browser(thread_name)
+
+        browser = self.create_browser_instance(browser_id)
 
         try:
             # 执行注册操作
@@ -73,21 +79,28 @@ class RegistrationWorker(QThread):
 
         finally:
             browser.quit()
+            self.browser_manager.release_browser(thread_name)
 
         # 实时保存每次成功操作后的配置
         self.save_configs_signal.emit()
 
-    def create_browser_instance(self):
-        # 创建一个新的浏览器实例
-        options = webdriver.ChromeOptions()
-        # 根据需要配置浏览器选项，例如无头模式、代理等
-        # options.add_argument('--headless')
-        browser = webdriver.Chrome(options=options)
+    def create_browser_instance(self, browser_id):
+        # 使用 browser_id 创建一个新的浏览器实例
+        res = openBrowser(browser_id)
+        driverPath = res['data']['driver']
+        debuggerAddress = res['data']['http']
+
+        # 设置 Chrome 选项
+        chrome_options = webdriver.ChromeOptions()
+        chrome_options.add_experimental_option("debuggerAddress", debuggerAddress)
+
+        # 使用获取的路径和选项启动浏览器
+        browser = webdriver.Chrome(executable_path=driverPath, options=chrome_options)
         return browser
 
     def register_account(self, browser, email, password):
         # 访问注册页面并进行注册
-        browser.get('https://example.com/register')
+        browser.get('https://login.g2a.com/register-page?redirect_uri=https%3A%2F%2Fwww.g2a.com%2F&source=topbar')
         email_input = browser.find_element_by_name('email')
         password_input = browser.find_element_by_name('password')
         email_input.send_keys(email)
@@ -98,14 +111,13 @@ class RegistrationWorker(QThread):
 
     def add_to_cart(self, browser):
         # 模拟加入购物车的操作
-        browser.get('https://example.com/product-page')
+        browser.get('https://www.g2a.com/category/games-c189')
         add_to_cart_button = browser.find_element_by_name('add_to_cart')
         add_to_cart_button.click()
         time.sleep(2)  # 等待操作完成
 
     def process_payment(self, browser):
         # 模拟支付的操作
-        browser.get('https://example.com/checkout')
         pay_button = browser.find_element_by_name('pay')
         pay_button.click()
         time.sleep(2)  # 等待支付完成
